@@ -18,9 +18,10 @@ name: Reflect — auto-ship
 # method is asserted below rather than left to repository defaults.
 
 on:
-  # Fires when a check suite settles, which is how we learn CI went green
-  # without polling. pull_request alone would fire before the checks exist.
-  check_suite:
+  # check_suite does not fire for suites created by GitHub Actions.
+  # Use the workflow name (not the job name) to retry once CI has finished.
+  workflow_run:
+    workflows: [CI]
     types: [completed]
   # Labelling a PR after CI has already finished would otherwise never retrigger.
   pull_request_target:
@@ -42,10 +43,14 @@ concurrency:
 jobs:
   ship:
     # Skipped outright while the switch is off, so no event opens the environment.
-    if: github.repository == 'GetOn-Reflect-Next/open-seo' && vars.REFLECT_AUTO_SHIP == 'true'
+    if: >-
+      github.repository == 'GetOn-Reflect-Next/open-seo' && vars.REFLECT_AUTO_SHIP == 'true' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     # REFLECT_SYNC_TOKEN lives on this environment, which only `main` may use.
-    # pull_request_target and check_suite runs both execute on `main`.
+    # pull_request_target and workflow_run runs both execute on `main`.
     environment: upstream-sync
     steps:
       # Off until switched on. Landing this workflow therefore changes nothing
@@ -80,20 +85,20 @@ jobs:
           EVENT: ${{ github.event_name }}
           INPUT_PR: ${{ github.event.inputs.pr }}
           LABELED_PR: ${{ github.event.pull_request.number }}
-          SUITE_BRANCH: ${{ github.event.check_suite.head_branch }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           case "$EVENT" in
             workflow_dispatch) pr="$INPUT_PR" ;;
             pull_request_target) pr="$LABELED_PR" ;;
-            check_suite)
+            workflow_run)
               # Only sync branches are ever candidates.
-              case "$SUITE_BRANCH" in
+              case "$RUN_BRANCH" in
                 reflect/upstream-v*) ;;
-                *) echo "Not a sync branch ($SUITE_BRANCH) — nothing to do."
+                *) echo "Not a sync branch ($RUN_BRANCH) — nothing to do."
                    echo "pr=" >> "$GITHUB_OUTPUT"; exit 0 ;;
               esac
-              pr=$(gh pr list --head "$SUITE_BRANCH" --state open \
+              pr=$(gh pr list --head "$RUN_BRANCH" --state open \
                      --json number --jq '.[0].number // empty')
               ;;
           esac
