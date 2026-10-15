@@ -43,7 +43,7 @@ concurrency:
 
 jobs:
   ship:
-    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
+    if: github.repository == 'GetOn-Reflect-Next/open-seo'
     runs-on: ubuntu-latest
     steps:
       # Off until switched on. Landing this workflow therefore changes nothing
