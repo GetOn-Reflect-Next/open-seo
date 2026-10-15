@@ -45,7 +45,7 @@ jobs:
   # SQL out of git. Its output picks the environment the deploy job runs in,
   # which is what makes the reviewer requirement conditional.
   classify:
-    if: github.repository == 'sebastian-reflectmedia/open-seo'
+    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
     runs-on: ubuntu-latest
     outputs:
       class: ${{ steps.risk.outputs.class }}
@@ -101,7 +101,7 @@ jobs:
 
   deploy:
     needs: classify
-    if: github.repository == 'sebastian-reflectmedia/open-seo'
+    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
     runs-on: ubuntu-latest
     environment: ${{ needs.classify.outputs.environment }}
     env:
