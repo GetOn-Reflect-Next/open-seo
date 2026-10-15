@@ -59,6 +59,9 @@ jobs:
     # Keeps this file inert if it is ever synced to another fork.
     if: github.repository == 'GetOn-Reflect-Next/open-seo'
     runs-on: ubuntu-latest
+    # REFLECT_SYNC_TOKEN lives on this environment, which only `main` may use, so
+    # a workflow pushed on another branch cannot read it.
+    environment: upstream-sync
     # The `secrets` context is not available in a step-level `if`, so collapse it
     # to a plain string here and branch on that instead.
     env:
