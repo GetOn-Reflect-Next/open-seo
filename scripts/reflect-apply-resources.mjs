@@ -332,7 +332,7 @@ function main() {
   // A wrangler config we do not know about would deploy with upstream's ids.
   const known = new Set(CONFIGS.map((c) => c.file));
   for (const f of readdirSync(process.cwd())) {
-    if (/^wrangler\b.*\.(jsonc?|toml)$/.test(f) && !known.has(f)) {
+    if (/^wrangler.*\.(jsonc?|toml)$/.test(f) && !known.has(f)) {
       fail(`unrecognised wrangler config ${f} — add it to CONFIGS`);
     }
   }
