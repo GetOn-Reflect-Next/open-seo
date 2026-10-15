@@ -41,6 +41,8 @@ type GscSiteListResult = {
     accountId: string;
     email: string | null;
     requiresReconnect: boolean;
+    propertiesUnavailable: boolean;
+    apiDisabled: boolean;
     sites: GscSite[];
   }>;
 };
@@ -112,10 +114,16 @@ async function listSitesForUserWithGrantStatus(
           accountId: grant.accountId,
           email,
           requiresReconnect: false,
+          propertiesUnavailable: false,
+          apiDisabled: false,
           sites,
         };
       } catch (error) {
-        if (!isExpectedGrantFailure(error)) {
+        // A disabled API is a self-host setup fault, not a dead grant:
+        // reconnecting can't fix it, so log it and show the setup message.
+        const apiDisabled = error instanceof GscApiError && error.apiDisabled;
+        const requiresReconnect = isExpectedGrantFailure(error) && !apiDisabled;
+        if (!requiresReconnect) {
           console.error(
             "Failed to list Search Console sites for account",
             grant.accountId,
@@ -125,7 +133,9 @@ async function listSitesForUserWithGrantStatus(
         return {
           accountId: grant.accountId,
           email: null,
-          requiresReconnect: true,
+          requiresReconnect,
+          propertiesUnavailable: !requiresReconnect,
+          apiDisabled,
           sites: [],
         };
       }
@@ -185,41 +195,8 @@ async function setSite(input: {
   });
 }
 
-async function unlinkUserGrant(
-  userId: string,
-  gscAccountId: string,
-): Promise<void> {
-  await db
-    .delete(account)
-    .where(
-      and(
-        eq(account.userId, userId),
-        eq(account.providerId, GSC_OAUTH_PROVIDER_ID),
-        eq(account.accountId, gscAccountId),
-      ),
-    );
-}
-
-async function disconnect(input: {
-  projectId: string;
-  userId: string;
-}): Promise<void> {
-  const connection = await GscConnectionRepository.getByProjectId(
-    input.projectId,
-  );
+async function disconnect(input: { projectId: string }): Promise<void> {
   await GscConnectionRepository.deleteByProjectId(input.projectId);
-  if (
-    connection?.gscAccountId &&
-    connection.connectedByUserId === input.userId
-  ) {
-    const stillUsed = await GscConnectionRepository.existsForConnectorAccount(
-      input.userId,
-      connection.gscAccountId,
-    );
-    if (!stillUsed) {
-      await unlinkUserGrant(input.userId, connection.gscAccountId);
-    }
-  }
 }
 
 /** Pass-through of GSC `searchAnalytics.query` for a project's connected property. */
@@ -233,6 +210,11 @@ async function getPerformance(
     throw new GscNotConnectedError(input.projectId);
   }
   const request = buildSearchAnalyticsRequest(input);
+  // The MCP input schema caps tool responses at 1,000; app consumers may
+  // request Google's full page to compare low-click keywords accurately.
+  if (input.rowLimit !== undefined)
+    request.rowLimit = Math.max(1, Math.min(25000, input.rowLimit));
+
   const client = createGscClient({
     userId: connection.connectedByUserId,
     gscAccountId: connection.gscAccountId ?? undefined,
