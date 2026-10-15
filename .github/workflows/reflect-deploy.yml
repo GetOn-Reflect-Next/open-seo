@@ -45,7 +45,7 @@ jobs:
   # SQL out of git. Its output picks the environment the deploy job runs in,
   # which is what makes the reviewer requirement conditional.
   classify:
-    if: github.repository == 'sebastian-reflectmedia/open-seo'
+    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
     runs-on: ubuntu-latest
     outputs:
       class: ${{ steps.risk.outputs.class }}
@@ -101,7 +101,7 @@ jobs:
 
   deploy:
     needs: classify
-    if: github.repository == 'sebastian-reflectmedia/open-seo'
+    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
     runs-on: ubuntu-latest
     environment: ${{ needs.classify.outputs.environment }}
     env:
@@ -159,6 +159,21 @@ jobs:
       # upstream renamed a binding. Failing here is the point.
       - name: Point config at Reflect resources
         run: node scripts/reflect-apply-resources.mjs
+
+      # From upstream v0.1.7 `pnpm run deploy` also ships open-seo-audit. Secrets
+      # are per worker, so it does not inherit the app's DataForSEO key, and
+      # without one every Lighthouse check fails while the smoke tests pass.
+      # Checked before migrating so a missing key costs nothing. On the first
+      # cutover the worker does not exist yet; `secret put` creates it.
+      - name: Check the audit worker has its DataForSEO key
+        if: hashFiles('wrangler.audit.jsonc') != ''
+        run: |
+          if ! pnpm exec wrangler secret list --name open-seo-audit 2>/dev/null \
+               | grep -q '"DATAFORSEO_API_KEY"'; then
+            echo "::error::open-seo-audit has no DATAFORSEO_API_KEY. Set it once (same value as open-seo's), then rerun:"
+            echo "  pnpm exec wrangler secret put DATAFORSEO_API_KEY --name open-seo-audit"
+            exit 1
+          fi
 
       # MUST come before the migrate step. `pnpm run deploy` is
       # `db:migrate:prod && build && wrangler deploy` — it migrates FIRST and
@@ -266,6 +281,13 @@ jobs:
           echo "A check after publish failed — the new version is live, rolling code back."
           pnpm exec wrangler rollback \
             --message "automatic rollback of ${GITHUB_SHA} (${GITHUB_RUN_ID})"
+          # Keep the audit worker paired with the app. On the first cutover it
+          # has no previous version, and the rolled-back app does not use it.
+          if [ -f wrangler.audit.jsonc ]; then
+            pnpm exec wrangler rollback --name open-seo-audit \
+              --message "automatic rollback of ${GITHUB_SHA} (${GITHUB_RUN_ID})" \
+              || echo "::warning::could not roll back open-seo-audit (no previous version?) — check it by hand"
+          fi
           echo "Rolled back. Verifying the origin is still protected."
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$OPENSEO_URL/")
           echo "anonymous GET / -> $code"
@@ -284,8 +306,9 @@ jobs:
           echo "Deploy failed. Code rollback: ${ROLLED_BACK:-not attempted}."
           echo ""
           if [ "${ROLLED_BACK:-}" != "success" ]; then
-            echo "  # the Worker may still be running the bad release"
+            echo "  # the Workers may still be running the bad release"
             echo "  pnpm exec wrangler rollback --message 'manual rollback'"
+            echo "  pnpm exec wrangler rollback --name open-seo-audit --message 'manual rollback'"
             echo ""
           fi
           if [ "${RISK:-}" = "risky" ]; then

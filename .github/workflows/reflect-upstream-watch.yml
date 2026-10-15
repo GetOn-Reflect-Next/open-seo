@@ -57,7 +57,7 @@ concurrency:
 jobs:
   watch:
     # Keeps this file inert if it is ever synced to another fork.
-    if: github.repository == 'sebastian-reflectmedia/open-seo'
+    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
     runs-on: ubuntu-latest
     # The `secrets` context is not available in a step-level `if`, so collapse it
     # to a plain string here and branch on that instead.
@@ -197,7 +197,14 @@ jobs:
           mv /tmp/lock.json .reflect/upstream.lock
           git add .reflect/upstream.lock
           git commit -m "chore(reflect): track upstream ${NEW_TAG}"
-          git push --force-with-lease origin "$branch"
+          # A 403 here means REFLECT_SYNC_TOKEN can read the repo but not write it.
+          # Upstream releases also edit .github/workflows/, which GitHub refuses
+          # without the Workflows permission, so the token needs all three.
+          if ! git push --force-with-lease origin "$branch"; then
+            echo "::error::push refused. REFLECT_SYNC_TOKEN needs Contents, Pull requests" \
+                 "and Workflows read/write on ${GITHUB_REPOSITORY}. Re-issue it, then rerun."
+            exit 1
+          fi
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
       # Decides whether this release may ship without a human. Runs after the

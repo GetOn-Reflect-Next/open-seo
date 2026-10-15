@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Write Reflect's Cloudflare resource ids into wrangler.jsonc at deploy time.
+// Write Reflect's Cloudflare resource ids into the wrangler configs at deploy time.
 //
 // The fork is public, so the ids never live in git. They arrive as env vars
 // (repo secrets in CI, a sourced file locally) and this script injects them
@@ -10,6 +10,11 @@
 // `database_id` and `migrations_dir` out of this same config. A deploy that
 // skips this step silently targets upstream's D1, KV and R2.
 //
+// Since upstream v0.1.7 the site-audit engine is a second worker,
+// `wrangler.audit.jsonc`, bound to the same D1, KV and R2. `pnpm run deploy`
+// deploys it after migrating, so it gets the same rewrite. Any other wrangler
+// config at the repo root fails the run until it is listed in CONFIGS.
+//
 // The design rationale — including every rejected alternative for keeping ids
 // out of the file — is in the private reflect-openseo repo, docs/upstream-sync.md.
 //
@@ -17,10 +22,9 @@
 //   --check  verify only; exit non-zero if the file is not already correct.
 //            Does not write. Used by the deploy workflow's post-check.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const CONFIG_PATH = resolve(process.cwd(), "wrangler.jsonc");
 const checkOnly = process.argv.includes("--check");
 
 // Every value we override, and where it lives. `binding` identifies the object
@@ -63,8 +67,21 @@ const RESOURCES = [
 // Do not flip this without first extending Access to the preview hostnames.
 const PREVIEW_URLS = false;
 
+// Every wrangler config at the repo root. `skip` lists the RESOURCES a config
+// does not bind; `crons` marks the worker that must keep its cron trigger.
+const CONFIGS = [
+  { file: "wrangler.jsonc", required: true, skip: [], crons: true },
+  {
+    file: "wrangler.audit.jsonc",
+    required: false,
+    skip: ["REFLECT_OAUTH_KV_ID"],
+    crons: false,
+  },
+];
+
 const problems = [];
-const fail = (msg) => problems.push(msg);
+let current = "";
+const fail = (msg) => problems.push(current ? `${current}: ${msg}` : msg);
 
 /** Read every required id from the environment before touching the file. */
 function readEnv() {
@@ -97,9 +114,7 @@ function findBindingBlock(source, array, binding) {
   const arrayRe = new RegExp(`"${array}"\\s*:\\s*\\[`, "g");
   const arrayMatches = [...source.matchAll(arrayRe)];
   if (arrayMatches.length !== 1) {
-    fail(
-      `expected exactly 1 "${array}" array in wrangler.jsonc, found ${arrayMatches.length}`,
-    );
+    fail(`expected exactly 1 "${array}" array, found ${arrayMatches.length}`);
     return null;
   }
 
@@ -234,7 +249,7 @@ function parseJsonc(src) {
  * Phase 1 proves a replacement happened; only this proves it happened in the
  * right place and produced valid config.
  */
-function verify(source, values) {
+function verify(source, values, config) {
   let parsed;
   try {
     parsed = parseJsonc(source);
@@ -243,7 +258,7 @@ function verify(source, values) {
     return;
   }
 
-  for (const r of RESOURCES) {
+  for (const r of resourcesFor(config)) {
     const arr = parsed[r.array];
     if (!Array.isArray(arr)) {
       fail(`verify: "${r.array}" missing or not an array`);
@@ -270,23 +285,26 @@ function verify(source, values) {
 
   // Guard the one setting whose loss is invisible: the cron that drives
   // scheduled rank checks.
-  if (!parsed.triggers?.crons?.length) {
+  if (config.crons && !parsed.triggers?.crons?.length) {
     fail(
       `verify: triggers.crons is empty — scheduled rank checks would never run`,
     );
   }
 }
 
-function main() {
-  const values = readEnv();
-  if (problems.length) return report();
+const resourcesFor = (config) =>
+  RESOURCES.filter((r) => !config.skip.includes(r.env));
 
+/** Rewrite (or with --check, only verify) one config. Returns the new source. */
+function processConfig(config, values) {
+  current = config.file;
+  const path = resolve(process.cwd(), config.file);
   let source;
   try {
-    source = readFileSync(CONFIG_PATH, "utf8");
+    source = readFileSync(path, "utf8");
   } catch (e) {
-    fail(`cannot read ${CONFIG_PATH}: ${e.message}`);
-    return report();
+    fail(`cannot read ${path}: ${e.message}`);
+    return null;
   }
 
   // --check inspects the file exactly as it stands. It must never apply the
@@ -294,30 +312,56 @@ function main() {
   // untouched upstream config and report success for a deploy that never
   // targeted our resources at all.
   if (checkOnly) {
-    verify(source, values);
-    if (problems.length) return report();
+    verify(source, values, config);
+    return null;
+  }
+
+  const original = source;
+  for (const r of resourcesFor(config)) {
+    source = applyOne(source, r, values[r.env]);
+  }
+  source = applyPreviewUrls(source);
+  verify(source, values, config);
+  return source === original ? null : source;
+}
+
+function main() {
+  const values = readEnv();
+  if (problems.length) return report();
+
+  // A wrangler config we do not know about would deploy with upstream's ids.
+  const known = new Set(CONFIGS.map((c) => c.file));
+  for (const f of readdirSync(process.cwd())) {
+    if (/^wrangler.*\.(jsonc?|toml)$/.test(f) && !known.has(f)) {
+      fail(`unrecognised wrangler config ${f} — add it to CONFIGS`);
+    }
+  }
+
+  const configs = CONFIGS.filter((c) => {
+    if (existsSync(resolve(process.cwd(), c.file))) return true;
+    if (c.required) fail(`${c.file} is missing`);
+    return false;
+  });
+  if (problems.length) return report();
+
+  // Process every config before writing any, so a failure leaves all of them
+  // untouched.
+  const writes = configs.map((c) => [c.file, processConfig(c, values)]);
+  current = "";
+  if (problems.length) return report();
+
+  if (checkOnly) {
     console.log(
       "[apply-resources] check passed — config already targets Reflect resources",
     );
     return;
   }
 
-  const original = source;
-  for (const r of RESOURCES) {
-    source = applyOne(source, r, values[r.env]);
-  }
-  source = applyPreviewUrls(source);
-
-  if (problems.length) return report();
-
-  verify(source, values);
-  if (problems.length) return report();
-
-  if (source !== original) {
-    writeFileSync(CONFIG_PATH, source);
+  for (const [file, source] of writes) {
+    if (source !== null) writeFileSync(resolve(process.cwd(), file), source);
   }
   console.log(
-    `[apply-resources] wrangler.jsonc now targets Reflect resources ` +
+    `[apply-resources] Reflect resources written to ${configs.map((c) => c.file).join(", ")} ` +
       `(D1 ${values.REFLECT_D1_NAME}, R2 ${values.REFLECT_R2_BUCKET}, preview_urls ${PREVIEW_URLS})`,
   );
 }
