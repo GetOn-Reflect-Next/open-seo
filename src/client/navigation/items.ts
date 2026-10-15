@@ -1,13 +1,15 @@
 import {
   Bookmark,
   Bot,
+  Brain,
+  ChartLine,
   ClipboardCheck,
+  FileText,
   Globe,
   LayoutDashboard,
   Link2,
   MessageSquare,
   Search,
-  Sparkles,
   TrendingUp,
 } from "lucide-react";
 import { linkOptions } from "@tanstack/react-router";
@@ -58,26 +60,45 @@ const projectNavItems = [
     icon: ClipboardCheck,
   },
   {
-    to: "/p/$projectId/brand-lookup" as const,
-    label: "Brand Lookup",
-    icon: Sparkles,
+    to: "/p/$projectId/ai-visibility" as const,
+    label: "Prompt Tracking",
+    icon: ChartLine,
+    activeOptions: { exact: true, includeSearch: false },
+  },
+  {
+    to: "/p/$projectId/ai-visibility/research" as const,
+    label: "Prompt Research",
+    icon: Search,
   },
   {
     to: "/p/$projectId/prompt-explorer" as const,
     label: "Prompt Explorer",
     icon: MessageSquare,
   },
+  {
+    to: "/p/$projectId/reports" as const,
+    label: "Reports",
+    icon: FileText,
+  },
+  {
+    to: "/p/$projectId/context" as const,
+    label: "Context",
+    icon: Brain,
+  },
 ] as const;
 
+// Project-independent. Rendered inside the project "AI Tools" group when a project
+// is selected, and on its own (connectNavGroup) when none is.
 const aiNavItem = linkOptions({
   to: "/ai" as const,
-  label: "AI & MCP",
+  label: "Agent setup",
   icon: Bot,
 });
 
-// Always-visible sidebar group (not project-scoped, unlike the groups below).
+// Shown only when no project is selected; with a project, Agent setup lives in
+// the "AI Tools" group below.
 export const connectNavGroup = {
-  label: "Connect",
+  label: "AI Tools",
   items: [aiNavItem],
 };
 
@@ -109,8 +130,14 @@ export function getProjectNavGroups(projectId: string) {
         byPath("/p/$projectId/keywords"),
         byPath("/p/$projectId/domain"),
         byPath("/p/$projectId/backlinks"),
-        byPath("/p/$projectId/brand-lookup"),
+      ],
+    },
+    {
+      label: "AI Visibility",
+      items: [
+        byPath("/p/$projectId/ai-visibility/research"),
         byPath("/p/$projectId/prompt-explorer"),
+        byPath("/p/$projectId/ai-visibility"),
       ],
     },
     {
@@ -120,6 +147,14 @@ export function getProjectNavGroups(projectId: string) {
         byPath("/p/$projectId/rank-tracking"),
         byPath("/p/$projectId/saved"),
         byPath("/p/$projectId/audit"),
+      ],
+    },
+    {
+      label: "AI Tools",
+      items: [
+        byPath("/p/$projectId/reports"),
+        byPath("/p/$projectId/context"),
+        aiNavItem,
       ],
     },
   ];

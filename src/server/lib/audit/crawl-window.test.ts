@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { adjustCrawlWindow } from "@/server/lib/audit/crawl-window";
-import type {
-  CrawledPageResult,
-  PageFetchClass,
-} from "@/server/lib/audit/types";
+import type { CrawledPageResult } from "@/server/lib/audit/types";
+import type { PageFetchClass } from "@/shared/audit-fetch-class";
 
 function page(
   fetchClass: PageFetchClass,
@@ -36,6 +34,7 @@ function page(
     contentHash: null,
     isHtml: true,
     htmlBytes,
+    rateLimited: false,
     imagesTotal: 0,
     imagesMissingAlt: 0,
     images: [],
@@ -51,55 +50,32 @@ function page(
 
 describe("adjustCrawlWindow", () => {
   it("keeps the window on an empty batch", () => {
-    expect(adjustCrawlWindow(10, [])).toBe(10);
+    expect(adjustCrawlWindow(2, [])).toBe(2);
   });
 
-  it("halves the window when a third of the batch is troubled", () => {
-    const recent = [
-      ...Array.from({ length: 9 }, () => page("error", 15_000)),
-      ...Array.from({ length: 16 }, () => page("ok", 500)),
-    ];
-    expect(adjustCrawlWindow(25, recent)).toBe(12);
+  // A 429 the retries recovered from still counts as trouble.
+  it.each([
+    ["a failed fetch", page("error", 300)],
+    ["a recovered 429", { ...page("ok", 300), rateLimited: true }],
+  ])("reduces concurrency on %s", (_case, troubled) => {
+    const recent = Array.from({ length: 10 }, () => troubled);
+    expect(adjustCrawlWindow(2, recent)).toBe(1);
   });
 
-  it("treats blocked fetches as trouble", () => {
-    const recent = Array.from({ length: 10 }, () => page("blocked", 300));
-    expect(adjustCrawlWindow(20, recent)).toBe(10);
+  it("never shrinks below one request", () => {
+    expect(adjustCrawlWindow(1, [page("error", 15_000)])).toBe(1);
   });
 
-  it("never shrinks below the minimum", () => {
-    const recent = Array.from({ length: 10 }, () => page("error", 15_000));
-    expect(adjustCrawlWindow(6, recent)).toBe(5);
-  });
-
-  it("grows on a clean, fast batch up to the cap", () => {
+  it("never grows beyond two concurrent requests, even on a fast site", () => {
     const recent = Array.from({ length: 25 }, () => page("ok", 400));
-    expect(adjustCrawlWindow(10, recent)).toBe(15);
-    expect(adjustCrawlWindow(20, recent)).toBe(20);
+    expect(adjustCrawlWindow(2, recent)).toBe(2);
+    expect(adjustCrawlWindow(1, recent)).toBe(2);
   });
 
-  it("caps the window so heavy pages stay inside the byte budget", () => {
-    // 1 MiB average pages: 16 MiB budget / 1 MiB = window of 16.
+  it("preserves the byte budget if page sizes increase", () => {
     const recent = Array.from({ length: 25 }, () =>
-      page("ok", 300, 1024 * 1024),
+      page("ok", 300, 5 * 1024 * 1024),
     );
-    expect(adjustCrawlWindow(20, recent)).toBe(16);
-  });
-
-  it("keeps the byte bound at the minimum window even for huge pages", () => {
-    const recent = Array.from({ length: 25 }, () =>
-      page("ok", 300, 4 * 1024 * 1024),
-    );
-    expect(adjustCrawlWindow(20, recent)).toBe(5);
-  });
-
-  it("lets small pages use the full window cap", () => {
-    const recent = Array.from({ length: 25 }, () => page("ok", 400, 10_000));
-    expect(adjustCrawlWindow(20, recent)).toBe(20);
-  });
-
-  it("holds steady on a clean but slow batch", () => {
-    const recent = Array.from({ length: 25 }, () => page("ok", 5_000));
-    expect(adjustCrawlWindow(15, recent)).toBe(15);
+    expect(adjustCrawlWindow(2, recent)).toBe(1);
   });
 });
