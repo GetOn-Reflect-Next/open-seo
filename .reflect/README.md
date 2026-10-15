@@ -6,7 +6,7 @@ Reflect Media's deployment layer for this fork. Everything Reflect owns lives in
 with it. No tracked upstream file is modified.
 
 Upstream is [`every-app/open-seo`](https://github.com/every-app/open-seo) (MIT).
-The private companion repo is `sebastian-reflectmedia/reflect-openseo`, which holds
+The private companion repo is `GetOn-Reflect-Next/reflect-openseo`, which holds
 the resource IDs, the runbooks and the cost log.
 
 ## The rule
@@ -182,7 +182,7 @@ points at space `AAQAVsr-kPw`. Copy it without it touching a clipboard:
 ```bash
 gcloud secrets versions access latest --secret=chat-webhook-url \
   --account admin@reflectmedia.ca --project reflect-ai-workspace \
-  | gh secret set CHAT_WEBHOOK_URL --repo sebastian-reflectmedia/open-seo
+  | gh secret set CHAT_WEBHOOK_URL --repo GetOn-Reflect-Next/open-seo
 ```
 
 Treat that URL as a credential: its `key` and `token` query parameters are the

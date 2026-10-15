@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   nudge:
-    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
+    if: github.repository == 'GetOn-Reflect-Next/open-seo'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

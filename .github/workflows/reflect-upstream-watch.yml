@@ -57,7 +57,7 @@ concurrency:
 jobs:
   watch:
     # Keeps this file inert if it is ever synced to another fork.
-    if: contains(fromJSON('["sebastian-reflectmedia/open-seo", "GetOn-Reflect-Next/open-seo"]'), github.repository)
+    if: github.repository == 'GetOn-Reflect-Next/open-seo'
     runs-on: ubuntu-latest
     # The `secrets` context is not available in a step-level `if`, so collapse it
     # to a plain string here and branch on that instead.
