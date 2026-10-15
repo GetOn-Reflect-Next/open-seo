@@ -1,4 +1,4 @@
 {
-  "tag": "v0.1.6",
+  "tag": "v0.1.13",
   "note": "Upstream release this fork is synced to. Bumped only by reflect-upstream-watch.yml, never by hand. Seeded 2026-08-18 after the manual v0.1.2 -> v0.1.4 catch-up deploy."
 }
