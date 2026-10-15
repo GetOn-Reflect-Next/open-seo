@@ -9,10 +9,8 @@ name: Reflect — auto-ship
 # are allowed through unattended. Remove the label to take any release back
 # under review.
 #
-# This does not use GitHub's own auto-merge. That feature requires branch
-# protection or a ruleset on `main`, which this fork does not have, and enabling
-# it would also start gating Sebastian's own direct pushes. Checking the states
-# here keeps the behaviour explicit and visible in one file.
+# This does not use GitHub's own auto-merge. Checking the states here keeps the
+# behaviour explicit and visible in one file.
 #
 # MERGE METHOD IS LOAD-BEARING. `--merge` only. A squash drops the link between
 # main and the upstream tag, and the next release then conflicts against every
@@ -43,8 +41,12 @@ concurrency:
 
 jobs:
   ship:
-    if: github.repository == 'GetOn-Reflect-Next/open-seo'
+    # Skipped outright while the switch is off, so no event opens the environment.
+    if: github.repository == 'GetOn-Reflect-Next/open-seo' && vars.REFLECT_AUTO_SHIP == 'true'
     runs-on: ubuntu-latest
+    # REFLECT_SYNC_TOKEN lives on this environment, which only `main` may use.
+    # pull_request_target and check_suite runs both execute on `main`.
+    environment: upstream-sync
     steps:
       # Off until switched on. Landing this workflow therefore changes nothing
       # by itself; see the setup list in .reflect/README.md.

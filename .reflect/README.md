@@ -13,7 +13,7 @@ the resource IDs, the runbooks and the cost log.
 
 **This fork is public.** Forks of public repositories always are, and that cannot
 be changed. So Reflect's Cloudflare resource IDs — KV and OAuth KV namespaces, the
-D1 database, the R2 bucket — **never go in git here.** They arrive as repo secrets
+D1 database, the R2 bucket — **never go in git here.** They arrive as `production` environment secrets
 and get written into `wrangler.jsonc` at deploy time by `apply-resources.mjs`.
 
 `wrangler.jsonc` is **never modified in git on this fork.** If you find a commit
@@ -164,25 +164,30 @@ node scripts/reflect-apply-resources.mjs && pnpm run deploy
 writes nothing. It reports failure on an untouched upstream config, which is the
 whole point — use it to confirm what you are about to deploy.
 
-## Required repo secrets
+## Required secrets
+
+All secrets are environment-scoped; the repo has none. `reflect-deploy` reads
+`production`. The sync workflows read `upstream-sync`, which has no reviewer but
+only `main` may use, so a workflow pushed on another branch cannot read them.
 
 `reflect-deploy` needs: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
 `REFLECT_KV_ID`, `REFLECT_OAUTH_KV_ID`, `REFLECT_D1_NAME`, `REFLECT_D1_ID`,
 `REFLECT_R2_BUCKET`, and optionally `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
 for the authenticated smoke test.
 
-`reflect-upstream-watch` needs `REFLECT_SYNC_TOKEN`, a fine-grained PAT scoped to
-this fork with contents and pull-requests write.
+`reflect-upstream-watch` and `reflect-auto-ship` need `REFLECT_SYNC_TOKEN` on
+`upstream-sync`, a fine-grained PAT scoped to this fork with Contents, Pull requests
+and Workflows write.
 
-`reflect-sync-nudge` needs `CHAT_WEBHOOK_URL` — the **same** Google Chat incoming
+`reflect-sync-nudge` needs `CHAT_WEBHOOK_URL` on `upstream-sync` — the **same** Google Chat incoming
 webhook the dashboard ETL posts through, so alerts land in one space and there is
 one credential to rotate. It lives in Secret Manager as `chat-webhook-url` and
 points at space `AAQAVsr-kPw`. Copy it without it touching a clipboard:
 
 ```bash
 gcloud secrets versions access latest --secret=chat-webhook-url \
-  --account admin@reflectmedia.ca --project reflect-ai-workspace \
-  | gh secret set CHAT_WEBHOOK_URL --repo GetOn-Reflect-Next/open-seo
+  --account sebastian@reflectmedia.ca --project reflect-ai-workspace \
+  | gh secret set CHAT_WEBHOOK_URL --env upstream-sync --repo GetOn-Reflect-Next/open-seo
 ```
 
 Treat that URL as a credential: its `key` and `token` query parameters are the

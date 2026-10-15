@@ -38,6 +38,8 @@ jobs:
   nudge:
     if: github.repository == 'GetOn-Reflect-Next/open-seo'
     runs-on: ubuntu-latest
+    # CHAT_WEBHOOK_URL lives on this environment, which only `main` may use.
+    environment: upstream-sync
     steps:
       - uses: actions/checkout@v4
         with:
@@ -138,8 +140,8 @@ jobs:
             echo "::error::CHAT_WEBHOOK_URL is not set — nothing was posted."
             echo "Copy it from Secret Manager without it touching a clipboard:"
             echo "  gcloud secrets versions access latest --secret=chat-webhook-url \\"
-            echo "    --account admin@reflectmedia.ca --project reflect-ai-workspace \\"
-            echo "    | gh secret set CHAT_WEBHOOK_URL --repo ${GITHUB_REPOSITORY}"
+            echo "    --account sebastian@reflectmedia.ca --project reflect-ai-workspace \\"
+            echo "    | gh secret set CHAT_WEBHOOK_URL --env upstream-sync --repo ${GITHUB_REPOSITORY}"
             exit 1
           fi
           # jq -Rs builds the JSON string, so newlines and any quotes or
