@@ -11,12 +11,13 @@ import { failRunIfActive } from "@/server/features/rank-tracking/services/rankCh
 import {
   runLiveCheck,
   runQueuedCheck,
-  type QueuedCheckStats,
 } from "@/server/workflows/rankCheckPaths";
+import { retryRankChecks } from "@/server/workflows/rankCheckRetries";
 import { pgStep } from "@/server/workflows/pgStep";
 import { createDataforseoClient } from "@/server/lib/dataforseo";
 import { captureServerEvent } from "@/server/lib/posthog";
-import { AppError } from "@/server/lib/errors";
+import { sendCreditsExhaustedEvent } from "@/server/email/onboarding-drip";
+import { describeError } from "@/server/lib/errors";
 import { autumn } from "@/server/billing/autumn";
 import {
   AUTUMN_SEO_DATA_BALANCE_FEATURE_ID,
@@ -27,9 +28,14 @@ import {
   rankCheckCostApprovalError,
 } from "@/shared/rank-tracking";
 import { isHostedServerAuthMode } from "@/server/lib/runtime-env";
+import { isErrorCode } from "@/shared/error-codes";
 
-const SINGLE_ATTEMPT_STEP_CONFIG = {
-  retries: { limit: 0, delay: "1 second" as const },
+// These steps cost nothing and are safe to repeat: they touch our own rows,
+// prepare's Autumn calls only read balances, and its credits email is sent
+// once a day. So an engine failure on one attempt does not fail the run. The
+// paid batch steps live in rankCheckPaths and run once.
+const FREE_STEP_CONFIG = {
+  retries: { limit: 2, delay: "10 seconds" as const },
   timeout: "2 minutes" as const,
 };
 
@@ -81,8 +87,10 @@ async function prepareRankCheckKeywords(input: {
     trackingKeywords = trackingKeywords.filter((kw) => idSet.has(kw.id));
   }
 
+  // Refusals are not retried: a retry would only repeat them, and send the
+  // credits email again.
   if (trackingKeywords.length === 0) {
-    throw new AppError("INTERNAL_ERROR", "No keywords to track");
+    throw new NonRetryableError("No keywords to track");
   }
 
   const { costCredits } = estimateRankCheckCredits(
@@ -92,8 +100,7 @@ async function prepareRankCheckKeywords(input: {
     input.trigger === "scheduled" ? "queued" : "live",
   );
   if (input.maxCostCredits != null && costCredits > input.maxCostCredits) {
-    throw new AppError(
-      "VALIDATION_ERROR",
+    throw new NonRetryableError(
       rankCheckCostApprovalError(costCredits, input.maxCostCredits),
     );
   }
@@ -101,6 +108,7 @@ async function prepareRankCheckKeywords(input: {
   // Verify the user has enough credits for the full check before starting.
   // Scheduled checks go through the cheaper task queue, so estimate at queued
   // pricing — a live-price estimate would skip checks the user can afford.
+  // The estimate is the worst case, so it covers every retry.
   if (await isHostedServerAuthMode()) {
     const [monthlyCheck, topupCheck] = await Promise.all([
       autumn.check({
@@ -116,10 +124,9 @@ async function prepareRankCheckKeywords(input: {
       (monthlyCheck.balance?.remaining ?? 0) +
       (topupCheck.balance?.remaining ?? 0);
     if (available < costCredits) {
-      throw new AppError(
-        "INSUFFICIENT_CREDITS",
-        "Insufficient credits for rank check",
-      );
+      await sendCreditsExhaustedEvent(input.billingCustomer);
+      // The code alone, so the run's saved error shows the credits card.
+      throw new NonRetryableError("INSUFFICIENT_CREDITS");
     }
   }
 
@@ -143,7 +150,6 @@ async function finalizeRankCheckRun(input: {
   trigger: RankCheckParams["trigger"];
   devices: RankCheckParams["devices"];
   batchError: string | null;
-  queueStats: QueuedCheckStats | null;
 }) {
   // If stale-cleanup already marked our run failed, don't overwrite that
   // decision with a completed status — a replacement run may already be
@@ -218,17 +224,13 @@ async function finalizeRankCheckRun(input: {
     });
   }
 
-  // One-line summary per run so fallback rates are visible in Workers Logs.
-  // Keys match the PostHog event properties for log/event correlation.
-  const queueSummary = input.queueStats
-    ? ` queue_tasks=${input.queueStats.queueTasks} queue_collected=${input.queueStats.queueCollected} fallback_tasks=${input.queueStats.fallbackTasks} fallback_checked=${input.queueStats.fallbackChecked}`
-    : "";
+  // One-line summary per run, visible in Workers Logs.
   // Error text can echo vendor/user content — keep it one line and bounded.
   const errorSummary = errorMessage
     ? ` error="${errorMessage.replace(/\s+/g, " ").slice(0, 200)}"`
     : "";
   console.log(
-    `[rank-check] ${input.runId} ${status} org=${input.billingCustomer.organizationId} project=${input.projectId} trigger=${input.trigger} keywords=${keywordsChecked}/${keywordsTotal}${queueSummary}${errorSummary}`,
+    `[rank-check] ${input.runId} ${status} org=${input.billingCustomer.organizationId} project=${input.projectId} trigger=${input.trigger} keywords=${keywordsChecked}/${keywordsTotal}${errorSummary}`,
   );
 
   await captureServerEvent({
@@ -240,14 +242,6 @@ async function finalizeRankCheckRun(input: {
       status,
       trigger: input.trigger,
       keywords_checked: keywordsChecked,
-      ...(input.queueStats
-        ? {
-            queue_tasks: input.queueStats.queueTasks,
-            queue_collected: input.queueStats.queueCollected,
-            fallback_tasks: input.queueStats.fallbackTasks,
-            fallback_checked: input.queueStats.fallbackChecked,
-          }
-        : {}),
     },
   });
 }
@@ -259,15 +253,17 @@ async function markRankCheckRunFailed(input: {
   billingCustomer: BillingCustomerContext;
   error: unknown;
 }) {
-  const errorMessage =
+  // run() catches the error the engine rebuilt from the failed step, never
+  // the thrown object, with the message prefixed by the error's name. A
+  // refusal's bare code under that prefix is what the run keeps, so the
+  // credits card shows and the config can say why the check was skipped.
+  const message =
     input.error instanceof Error ? input.error.message : "Unknown error";
-  await failRunIfActive(input.runId, errorMessage);
+  const bare = message.replace(/^\w+: /, "");
+  const refusal = isErrorCode(bare) ? bare : null;
+  await failRunIfActive(input.runId, refusal ?? message);
 
-  // Flag the config so the UI can show why the scheduled check was skipped
-  const isInsufficientCredits =
-    input.error instanceof AppError &&
-    input.error.code === "INSUFFICIENT_CREDITS";
-  if (isInsufficientCredits) {
+  if (refusal === "INSUFFICIENT_CREDITS") {
     await RankTrackingRepository.updateConfig(input.configId, input.projectId, {
       lastSkipReason: "insufficient_credits",
     });
@@ -280,7 +276,8 @@ async function markRankCheckRunFailed(input: {
     properties: {
       project_id: input.projectId,
       status: "failed",
-      error: errorMessage,
+      // A code, not the message: provider errors can quote keywords or domains.
+      error_code: refusal ?? "INTERNAL_ERROR",
     },
   });
 }
@@ -320,7 +317,7 @@ export class RankCheckWorkflow extends WorkflowEntrypoint<
     const configCheck = await pgStep(
       step,
       "check-active",
-      { retries: { limit: 0, delay: "1 second" } },
+      FREE_STEP_CONFIG,
       async () => {
         const cfg = await RankTrackingRepository.getConfigById({
           configId,
@@ -342,7 +339,7 @@ export class RankCheckWorkflow extends WorkflowEntrypoint<
       const prepareResult = await pgStep(
         step,
         "prepare",
-        { retries: { limit: 0, delay: "1 second" } },
+        FREE_STEP_CONFIG,
         async () =>
           prepareRankCheckKeywords({
             runId,
@@ -362,7 +359,6 @@ export class RankCheckWorkflow extends WorkflowEntrypoint<
       console.log(`[rank-check] ${runId} loaded ${keywords.length} keywords`);
 
       let batchError: string | null = null;
-      let queueStats: QueuedCheckStats | null = null;
 
       try {
         const checkContext = {
@@ -377,12 +373,14 @@ export class RankCheckWorkflow extends WorkflowEntrypoint<
           runId,
         };
         // Scheduled checks use DataForSEO's task queue (~30% of live cost);
-        // manual checks stay on the live endpoint for instant results, and
-        // only the pairs the live endpoint missed go to the queue.
-        queueStats =
-          trigger === "scheduled"
-            ? await runQueuedCheck(step, checkContext)
-            : await runLiveCheck(step, checkContext);
+        // manual checks stay on the live endpoint for instant results.
+        // Retries always go through the queue.
+        if (trigger === "scheduled") {
+          await runQueuedCheck(step, checkContext);
+        } else {
+          await runLiveCheck(step, checkContext);
+        }
+        await retryRankChecks(step, checkContext, configId, trigger);
       } catch (error) {
         // Batch failure — snapshots for completed batches are already
         // persisted incrementally. Continue to finalization.
@@ -390,7 +388,7 @@ export class RankCheckWorkflow extends WorkflowEntrypoint<
         console.warn(`[rank-check] ${runId} partial failure: ${batchError}`);
       }
 
-      await pgStep(step, "finalize", SINGLE_ATTEMPT_STEP_CONFIG, async () =>
+      await pgStep(step, "finalize", FREE_STEP_CONFIG, async () =>
         finalizeRankCheckRun({
           runId,
           configId,
@@ -399,12 +397,16 @@ export class RankCheckWorkflow extends WorkflowEntrypoint<
           trigger,
           devices,
           batchError,
-          queueStats,
         }),
       );
     } catch (error) {
-      console.error(`Rank check ${runId} failed:`, error);
-      await pgStep(step, "mark-failed", SINGLE_ATTEMPT_STEP_CONFIG, async () =>
+      console.error(
+        `Rank check ${runId} failed: ${describeError(error)}`,
+        error,
+      );
+      // A retry after the body finished (an engine storage failure) sends the
+      // failed event again; harmless.
+      await pgStep(step, "mark-failed", FREE_STEP_CONFIG, async () =>
         markRankCheckRunFailed({
           runId,
           configId,
