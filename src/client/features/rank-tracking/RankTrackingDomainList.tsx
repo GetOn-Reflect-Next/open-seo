@@ -6,6 +6,7 @@ import { LOCATIONS } from "@/client/features/keywords/locations";
 import {
   AlertTriangle,
   Archive,
+  CircleAlert,
   Globe,
   Plus,
   ChevronRight,
@@ -14,11 +15,20 @@ import {
   getRankTrackingConfigSummaries,
   updateRankTrackingConfig,
 } from "@/serverFunctions/rank-tracking";
-import { devicesLabel, scheduleLabel } from "@/shared/rank-tracking";
+import {
+  devicesLabel,
+  isScheduledRankTrackingInterval,
+  scheduleLabel,
+} from "@/shared/rank-tracking";
 import { formatNextCheck } from "./scheduleTime";
-import { formatLocationLabel } from "@/shared/keyword-locations";
+import { ScheduledChecksPausedAlert } from "./ScheduledChecksPausedAlert";
+import {
+  formatLocationLabel,
+  SERP_LANGUAGE_OPTIONS,
+} from "@/shared/keyword-locations";
 import { ConfirmDialog } from "@/client/components/ConfirmDialog";
 import { EmptyState } from "@/client/components/EmptyState";
+import { GetCreditsButton } from "@/client/features/billing/InsufficientCreditsError";
 import { Button } from "@/client/components/ui/button";
 import {
   Card,
@@ -132,103 +142,120 @@ export function RankTrackingDomainList({
   });
 
   return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="px-5 pt-4 pb-3">
-        <CardTitle>
-          <h2 className="text-sm font-semibold">Tracked Domains</h2>
-        </CardTitle>
-        <CardAction className="self-center">
-          <Button size="sm" onClick={onAddDomain}>
-            <Plus data-icon="inline-start" />
-            Add Domain
-          </Button>
-        </CardAction>
-      </CardHeader>
-      {(allSummaries.length >= FILTER_BAR_MIN_DOMAINS ||
-        activeFilterCount > 0) && (
-        <DomainListFilterBar
-          filters={filters}
-          options={filterOptions}
-          activeFilterCount={activeFilterCount}
-          onChange={setFilters}
-          onReset={clearFilters}
-        />
-      )}
-      <div className="divide-y divide-border border-t border-border">
-        {summariesQuery.isError && (
-          <div className="px-5 py-4">
-            <QueryError
-              error={summariesQuery.error}
-              fallback="Failed to load tracked domains"
-              onRetry={() => void summariesQuery.refetch()}
-              isRetrying={summariesQuery.isFetching}
-            />
-          </div>
+    <>
+      <ScheduledChecksPausedAlert
+        hasScheduledCheck={allSummaries.some((summary) =>
+          isScheduledRankTrackingInterval(summary.scheduleInterval),
         )}
-        {summariesQuery.isPending ? (
-          <div className="space-y-4 px-5 py-4" aria-busy>
-            {Array.from({ length: 3 }).map((_, index) => (
-              <div key={index} className="space-y-2">
-                <Skeleton className="h-4 w-48" />
-                <Skeleton className="h-3 w-72" />
-              </div>
-            ))}
-          </div>
-        ) : !summaries ? null : summaries.length === 0 ? (
-          <EmptyState
-            variant="plain"
-            icon={Globe}
-            title="No tracked domains yet"
-            description="Add a domain to start monitoring keyword rankings over time."
+      />
+      <Card className="gap-0 py-0">
+        <CardHeader className="px-5 pt-4 pb-3">
+          <CardTitle>
+            <h2 className="text-sm font-semibold">Tracked Domains</h2>
+          </CardTitle>
+          <CardAction className="self-center">
+            <Button size="sm" onClick={onAddDomain}>
+              <Plus data-icon="inline-start" />
+              Add Domain
+            </Button>
+          </CardAction>
+        </CardHeader>
+        {(allSummaries.length >= FILTER_BAR_MIN_DOMAINS ||
+          activeFilterCount > 0) && (
+          <DomainListFilterBar
+            filters={filters}
+            options={filterOptions}
+            activeFilterCount={activeFilterCount}
+            onChange={setFilters}
+            onReset={clearFilters}
           />
-        ) : filteredSummaries.length === 0 ? (
-          <EmptyState
-            variant="plain"
-            kind="filtered"
-            title="No matching tracked domains"
-            description="Try clearing search or adjusting filters."
-            action={
-              <Button variant="outline" size="sm" onClick={clearFilters}>
-                Clear filters
-              </Button>
-            }
-          />
-        ) : (
-          filteredSummaries.map((summary) => (
-            <DomainRow
-              key={summary.id}
-              projectId={projectId}
-              summary={summary}
-              onArchive={() => setArchiveTarget(summary)}
-            />
-          ))
         )}
-      </div>
+        <div className="divide-y divide-border border-t border-border">
+          {summariesQuery.isError && (
+            <div className="px-5 py-4">
+              <QueryError
+                error={summariesQuery.error}
+                fallback="Failed to load tracked domains"
+                onRetry={() => void summariesQuery.refetch()}
+                isRetrying={summariesQuery.isFetching}
+              />
+            </div>
+          )}
+          {summariesQuery.isPending ? (
+            <div className="space-y-4 px-5 py-4" aria-busy>
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="space-y-2">
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-3 w-72" />
+                </div>
+              ))}
+            </div>
+          ) : !summaries ? null : summaries.length === 0 ? (
+            <EmptyState
+              variant="plain"
+              icon={Globe}
+              title="No tracked domains yet"
+              description="Add a domain to start monitoring keyword rankings over time."
+            />
+          ) : filteredSummaries.length === 0 ? (
+            <EmptyState
+              variant="plain"
+              kind="filtered"
+              title="No matching tracked domains"
+              description="Try clearing search or adjusting filters."
+              action={
+                <Button variant="outline" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            filteredSummaries.map((summary) => (
+              <DomainRow
+                key={summary.id}
+                projectId={projectId}
+                summary={summary}
+                // Only needed to tell apart trackers that differ by language
+                // alone; otherwise the language is just noise.
+                showLanguage={allSummaries.some(
+                  (other) =>
+                    other.domain === summary.domain &&
+                    other.locationCode === summary.locationCode &&
+                    other.languageCode !== summary.languageCode,
+                )}
+                onArchive={() => setArchiveTarget(summary)}
+              />
+            ))
+          )}
+        </div>
 
-      {archiveTarget && (
-        <ConfirmDialog
-          title={`Archive ${archiveTarget.domain}?`}
-          confirmLabel="Archive"
-          destructive
-          pending={archiveMutation.isPending}
-          onConfirm={() => archiveMutation.mutate(archiveTarget.id)}
-          onClose={() => setArchiveTarget(null)}
-        >
-          Scheduled checks will stop and this domain will be hidden from the
-          list. Ranking history is preserved.
-        </ConfirmDialog>
-      )}
-    </Card>
+        {archiveTarget && (
+          <ConfirmDialog
+            title={`Archive ${archiveTarget.domain}?`}
+            confirmLabel="Archive"
+            destructive
+            pending={archiveMutation.isPending}
+            onConfirm={() => archiveMutation.mutate(archiveTarget.id)}
+            onClose={() => setArchiveTarget(null)}
+          >
+            Scheduled checks will stop and this domain will be hidden from the
+            list. Ranking history is preserved.
+          </ConfirmDialog>
+        )}
+      </Card>
+    </>
   );
 }
 
 function DomainRow({
   projectId,
   summary,
+  showLanguage,
   onArchive,
 }: {
   projectId: string;
   summary: ConfigSummary;
+  showLanguage: boolean;
   onArchive: () => void;
 }) {
   return (
@@ -245,6 +272,14 @@ function DomainRow({
           {summary.locationName
             ? formatLocationLabel(summary.locationName, 2)
             : (LOCATIONS[summary.locationCode] ?? "US")}{" "}
+          {showLanguage && (
+            <>
+              &middot;{" "}
+              {SERP_LANGUAGE_OPTIONS.find(
+                (option) => option.code === summary.languageCode,
+              )?.label ?? summary.languageCode}{" "}
+            </>
+          )}
           &middot; {devicesLabel(summary.devices)} &middot;{" "}
           {scheduleLabel(summary.scheduleInterval)}
           {summary.scheduleInterval !== "manual" && summary.nextCheckAt && (
@@ -259,10 +294,14 @@ function DomainRow({
           )}
         </p>
         {summary.lastSkipReason === "insufficient_credits" && (
-          <p className="flex items-center gap-1 text-xs text-warning">
-            <AlertTriangle className="size-3" />
-            Scheduled check skipped — insufficient credits
-          </p>
+          <div className="mt-1 flex items-center gap-2 text-xs text-destructive">
+            <CircleAlert className="size-3" />
+            Scheduled check skipped: out of credits
+            {/* Above the row link, like the archive button. */}
+            <span className="pointer-events-auto relative z-10">
+              <GetCreditsButton />
+            </span>
+          </div>
         )}
         {summary.lastSkipReason === "plan_required" && (
           <p className="flex items-center gap-1 text-xs text-warning">

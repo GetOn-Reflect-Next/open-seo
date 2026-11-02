@@ -6,6 +6,9 @@
  * of these types by id.
  */
 
+// Relative: tests/badseo type-checks this file without the @ alias.
+import { RENDERED_CRAWL_TIME_LIMIT_HOURS } from "./audit-limits";
+
 export type IssueSeverity = "critical" | "warning" | "info";
 
 interface AuditIssueDescriptor {
@@ -22,7 +25,7 @@ export const AUDIT_ISSUE_TYPES = {
     explanation:
       "The site returned a bot challenge or access denial (e.g. a Cloudflare challenge or a 403) instead of the page. We report this honestly rather than pretending the page is broken — but it means this page could not be audited, and other crawlers like search engines may face similar friction.",
     howToFix:
-      'If you own this site, allowlist the "OpenSEO-Audit" user agent in your WAF/bot-protection settings (on Cloudflare: a WAF custom rule that skips bot protection when the user agent contains "OpenSEO-Audit"; on some free tiers you may need to relax bot protection). Then re-run the audit. On Shopify, use Crawler access instead (Online Store → Preferences → Crawler access) and paste the signature into OpenSEO under Settings → Crawler access.',
+      'If you own this site, allowlist the "OpenSEO-Audit" user agent in your WAF/bot-protection settings (on Cloudflare: a WAF custom rule that skips bot protection when the user agent contains "OpenSEO-Audit"; on some free tiers you may need to relax bot protection). Then re-run the audit. On Shopify, use Crawler access instead (Online Store → Preferences → Crawler access) and paste the signature into OpenSEO under Settings → Crawler access. How to allow and verify the crawler: https://openseo.so/docs/crawler',
   },
   "javascript-rendering-suspected": {
     severity: "warning",
@@ -36,17 +39,32 @@ export const AUDIT_ISSUE_TYPES = {
     severity: "warning",
     title: "Rate limited (429)",
     explanation:
-      "The server answered 429 Too Many Requests, so this page could not be audited. The crawler waits before retrying when the site's cooldown fits within the audit time limit.",
+      "The server answered 429 Too Many Requests, so this page could not be audited. The crawler paused for the server's Retry-After and tried the page once more before moving on.",
     howToFix:
-      'Raise the rate limit for crawlers, or allowlist the "OpenSEO-Audit" user agent in your rate-limiting rules (on Cloudflare: a rate-limiting rule exception matching that user agent). Then re-run the audit. Re-running with fewer pages also helps if the limit is strict. On Shopify, use Crawler access instead (Online Store → Preferences → Crawler access) and paste the signature into OpenSEO under Settings → Crawler access.',
+      'Raise the rate limit for crawlers, or allowlist the "OpenSEO-Audit" user agent in your rate-limiting rules (on Cloudflare: a rate-limiting rule exception matching that user agent). Then re-run the audit. Re-running with fewer pages also helps if the limit is strict. On Shopify, use Crawler access instead (Online Store → Preferences → Crawler access) and paste the signature into OpenSEO under Settings → Crawler access. How to allow and verify the crawler: https://openseo.so/docs/crawler',
   },
   "crawl-rate-limited": {
     severity: "warning",
     title: "Crawl stopped early: rate limit",
     explanation:
-      "The site asked the crawler to wait longer than the audit time limit allowed. We stopped requesting pages. This report is incomplete; URLs we did not fetch are not recorded as broken or rate limited.",
+      "The site refused several pages in a row with 429 Too Many Requests, or kept the crawler waiting for too long, so we stopped requesting pages. This report is incomplete; URLs we did not fetch are not recorded as broken or rate limited.",
     howToFix:
-      "Re-run the audit after the site's rate limit resets, or ask the site owner to allow the OpenSEO-Audit crawler. On Shopify, use Crawler access instead (Online Store → Preferences → Crawler access) and paste the signature into OpenSEO under Settings → Crawler access.",
+      "Re-run the audit after the site's rate limit resets, or ask the site owner to allow the OpenSEO-Audit crawler (https://openseo.so/docs/crawler). On Shopify, use Crawler access instead (Online Store → Preferences → Crawler access) and paste the signature into OpenSEO under Settings → Crawler access.",
+  },
+  "crawl-time-limit": {
+    severity: "warning",
+    title: "Crawl stopped early: time limit",
+    explanation: `Audits that render JavaScript stop crawling after ${RENDERED_CRAWL_TIME_LIMIT_HOURS} hours, and this one reached that limit. This report is incomplete; URLs we did not fetch are not recorded as broken.`,
+    howToFix:
+      "Re-run the audit with a lower page limit, or without Render JavaScript if the site's content and links are in its HTML. Rendering is billed only for pages actually rendered.",
+  },
+  "crawl-credits-exhausted": {
+    severity: "warning",
+    title: "Crawl stopped early: cost limit reached",
+    explanation:
+      "Many pages on this site needed our advanced renderer, so the audit reached its cost limit and stopped. You were only charged for the pages we rendered.",
+    howToFix:
+      "If the site doesn't need JavaScript to show its content, re-run with Render JavaScript off.",
   },
   "server-error": {
     severity: "critical",

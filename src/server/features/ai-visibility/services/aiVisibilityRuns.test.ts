@@ -5,6 +5,7 @@ import { AiVisibilityRepository as repo } from "../repositories/AiVisibilityRepo
 import { runCheck } from "./aiVisibilityRuns";
 import { getTracker } from "./aiVisibilityState";
 import { configuration, customer } from "./aiVisibilityTestFixtures";
+import { sendCreditsExhaustedEvent } from "@/server/email/onboarding-drip";
 
 const { testDb, workflow, hosted, credits } = await vi.hoisted(async () => {
   const { createAiVisibilityTestDb } = await import("../aiVisibilityTestDb");
@@ -27,6 +28,9 @@ vi.mock("@/server/lib/runtime-env", () => ({
 vi.mock("@/server/billing/subscription", () => ({
   getOrCreateOrganizationCustomer: async () => ({ id: "organization" }),
   getUsageCreditsRemaining: credits,
+}));
+vi.mock("@/server/email/onboarding-drip", () => ({
+  sendCreditsExhaustedEvent: vi.fn(),
 }));
 
 const projectId = "project";
@@ -81,6 +85,26 @@ describe("AI visibility checks", () => {
     ).toEqual([{ status: "failed" }]);
   });
 
+  it("terminates a check whose workflow is still running after 12 hours, so it stops blocking", async () => {
+    const stuck = await runCheck({ projectId, maxCostUsd: 1 }, customer);
+    await testDb.db
+      .update(aiRuns)
+      .set({ status: "running", createdAt: "2026-01-01T00:00:00.000Z" });
+    const terminate = vi.fn();
+    workflow.get.mockResolvedValue({
+      status: async () => ({ status: "running" }),
+      terminate,
+    });
+
+    const next = await runCheck({ projectId, maxCostUsd: 1 }, customer);
+
+    expect(next.id).not.toBe(stuck.id);
+    expect(terminate).toHaveBeenCalled();
+    expect(await repo.getRunInternal(stuck.id)).toMatchObject({
+      status: "failed",
+    });
+  });
+
   it("marks only prompts with collected answer text as having results", async () => {
     const run = await runCheck({ projectId, maxCostUsd: 1 }, customer);
     const answers = await repo.getObservations([run.id]);
@@ -123,6 +147,7 @@ describe("AI visibility checks", () => {
     expect((await repo.getTracker(projectId))?.lastSkipReason).toBe(
       "INSUFFICIENT_CREDITS",
     );
+    expect(sendCreditsExhaustedEvent).toHaveBeenCalledWith(customer);
   });
 
   it("starts a check that top-up credits cover after research overdrew monthly credits", async () => {

@@ -7,6 +7,11 @@ import {
   type PlanStatus,
 } from "@/shared/billing";
 import { autumn } from "@/server/billing/autumn";
+import {
+  primesAutoReloadOnEnable,
+  readAutoReload,
+  type AutoReloadStatus,
+} from "@/server/billing/auto-reload-status";
 import type { BillingCustomerContext } from "@/server/billing/subscription";
 import { AppError } from "@/server/lib/errors";
 
@@ -16,6 +21,9 @@ type BillingAccount = {
   /** The plan that granted the paid entitlement. Null on the free plan and
    *  for paid access granted by hand. */
   paidPlanId: string | null;
+  /** The paid plan's display name from Autumn; its ID when Autumn has no
+   *  subscription to name it from. */
+  paidPlanName: string | null;
   /** What the plan grants each month, in USD. */
   monthlyCreditsUsd: number;
   monthlyRemainingUsd: number;
@@ -28,15 +36,22 @@ type BillingAccount = {
   monthlyRefillsAt: number | null;
   /** Stripe emails a receipt for each paid invoice. */
   invoiceEmailsEnabled: boolean;
+  /** Automatic top-up purchases. Null when never set up. */
+  autoReload: AutoReloadStatus | null;
+  /** Whether turning auto-reload on charges the card for the first reload
+   *  at once; the page says so on the button. */
+  autoReloadPrimesOnEnable: boolean;
 };
 
 export async function getOrganizationBillingAccount(
   context: BillingCustomerContext,
 ): Promise<BillingAccount> {
-  // No expand: every field read below is on the bare customer.
+  // Every field read below, the auto-reload controls and the budget's spend
+  // included, is on the bare customer except the plan's name.
   const customer = await autumn.customers.getOrCreate({
     customerId: context.organizationId,
     email: context.userEmail,
+    expand: ["subscriptions.plan"],
   });
 
   // The SDK fails open on Autumn 5xx and network errors with an empty customer
@@ -64,6 +79,7 @@ export async function getOrganizationBillingAccount(
     // to grant it counts as paid without listing plan IDs here.
     planStatus: paidFlag ? "paid" : "free",
     paidPlanId: paidFlag?.planId ?? null,
+    paidPlanName: paidSubscription?.plan?.name ?? paidFlag?.planId ?? null,
     monthlyCreditsUsd: autumnSeoDataCreditsToUsd(monthly?.granted ?? 0),
     monthlyRemainingUsd: autumnSeoDataCreditsToUsd(monthly?.remaining ?? 0),
     topUpRemainingUsd: autumnSeoDataCreditsToUsd(topUp?.remaining ?? 0),
@@ -73,5 +89,7 @@ export async function getOrganizationBillingAccount(
       ? null
       : (monthly?.nextResetAt ?? null),
     invoiceEmailsEnabled: customer.sendEmailReceipts,
+    autoReload: readAutoReload(customer),
+    autoReloadPrimesOnEnable: primesAutoReloadOnEnable(customer),
   };
 }

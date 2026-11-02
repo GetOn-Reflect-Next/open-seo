@@ -26,7 +26,7 @@ import {
 import { withMcpProjectAuth } from "@/server/mcp/project-auth";
 import { projectIdSchema } from "@/server/mcp/schemas";
 import { renderingEstimateText } from "@/shared/audit-rendering";
-import { RENDERED_MAX_AUDIT_PAGES } from "@/shared/audit-limits";
+import { RENDERED_CRAWL_TIME_LIMIT_HOURS } from "@/shared/audit-limits";
 
 const auditIdSchema = z
   .string()
@@ -68,7 +68,7 @@ const runInputSchema = {
     .boolean()
     .optional()
     .describe(
-      `Render JavaScript before auditing, for sites whose content or links load client-side or whose bot protection blocks the plain crawler. Slower, and limited to ${RENDERED_MAX_AUDIT_PAGES.toLocaleString("en-US")} pages. On hosted plans: ${renderingEstimateText(100)} Billing counts pages actually rendered. Hosted plans hold the high end until the audit ends; an account that cannot cover it is refused. Default false.`,
+      `Render JavaScript before auditing, for sites whose content or links load client-side or whose bot protection blocks the plain crawler. Slower. On hosted plans, for 100 pages: ${renderingEstimateText(100)} Hosted plans hold that amount until the audit ends; an account that cannot cover it is refused. A hosted rendered crawl stops after ${RENDERED_CRAWL_TIME_LIMIT_HOURS} hours. Default false.`,
     ),
   runLighthouse: z
     .boolean()
@@ -382,7 +382,9 @@ export const getAuditIssuesTool = {
       rows.length === 0
         ? args.severity || args.issueType
           ? `No issues found for audit ${audit.id} matching the given filters.`
-          : `No issues recorded for audit ${audit.id}. Note: audits run before issue checks existed have no issue data — re-run the audit with run_site_audit to get a real report.`
+          : audit.status === "running"
+            ? `Audit ${audit.id} is still running; issues are recorded when it finishes. Poll get_audit_status.`
+            : `Audit ${audit.id} found no issues across ${audit.pagesCrawled} crawled page${audit.pagesCrawled === 1 ? "" : "s"}.`
         : [
             `Audit ${audit.id} (${audit.startUrl}): ${rows.length} issues across ${summary.length} issue type${summary.length === 1 ? "" : "s"}.`,
             ...sections,

@@ -26,22 +26,27 @@ When explaining traffic growth, Sam should frame OpenSEO as a tool for making be
 
 Hosted OpenSEO is free to try. Signing up requires no credit card, and new accounts include $0.50 of trial credits to test credit-using features before subscribing.
 
-The paid managed plan costs $10/month.
+Paid managed plans start at $10/month:
 
-The paid plan includes:
+- Base: $10/month, with $10.00 of usage credits each billing cycle.
+- Pro: $30/month, with $36.00 of usage credits each billing cycle and priority email support.
+- Agency: $200/month, with $240.00 of usage credits each billing cycle, a dedicated Slack Connect channel, and AI enablement (hands-on help setting up agents and workflows for the team).
+
+Every paid plan includes:
 
 - Keyword research, backlinks, rank tracking, and site audits.
 - AI visibility, prompt research, model comparisons, and prompt tracking.
 - MCP server and agent skills for Claude, Cursor, ChatGPT with a configured OpenSEO connection, Codex, and other MCP clients.
 - Google Search Console integration that does not use credits.
-- $10.00 of usage credits each billing cycle.
 - A 30-day money-back guarantee for the first charge.
+
+Customers choose a plan when they subscribe. To move an existing subscription to a different plan, they email support@openseo.so.
 
 OpenSEO uses usage credits for features that query paid SEO data providers, especially DataForSEO. Credit-using workflows include keyword volume, competitor data, backlinks, rank tracking, site audits, and AI visibility research and collection. Projects, settings, and data that has already been fetched do not cost credits to view.
 
-Subscribers can purchase top-up credits if monthly credits run out. Top-up credits roll over and do not expire. Monthly included credits reset each billing cycle. Top-ups are only available on the paid plan; a free-tier user who runs out of trial credits subscribes to the paid plan to continue using credit-based features.
+Subscribers can purchase top-up credits if monthly credits run out. Top-up credits roll over and do not expire. Monthly included credits reset each billing cycle. Top-ups are only available on a paid plan; a free-tier user who runs out of trial credits subscribes to a paid plan to continue using credit-based features.
 
-New paid operations require credits. AI visibility setup research checks for a positive balance once, completes without further credit gates, and bills actual usage afterward. On hosted OpenSEO, Prompt Research and Prompt Explorer require the paid plan; prompt tracking only needs credits.
+New paid operations require credits. AI visibility setup research checks for a positive balance once, completes without further credit gates, and bills actual usage afterward. On hosted OpenSEO, Prompt Research and Prompt Explorer require a paid plan; prompt tracking only needs credits.
 
 ## AI visibility
 
@@ -133,7 +138,7 @@ OpenSEO MCP tools cover workflows such as:
 
 OpenSEO also provides agent skills for workflows such as SEO project setup, SEO coaching, keyword research, competitive landscape analysis, competitor analysis, keyword clustering, link prospecting, AI Prompt Research, and AI Visibility Audit.
 
-ChatGPT setup guidance: send users to https://openseo.so/docs/chatgpt. A regular ChatGPT conversation cannot install OpenSEO itself; pasting the setup prompt there makes ChatGPT list the manual connection steps. The custom ChatGPT connection works on Free and paid ChatGPT plans, subject to workspace permissions on Business, Enterprise, and Edu. The server URL must be entered in full as https://app.openseo.so/mcp; without https:// ChatGPT reports "Unsafe URL". Desktop users with Codex access can use it for agent-assisted setup. A local Codex connection does not connect ChatGPT web. Offer OpenSEO's app if their client cannot connect. Verify by asking OpenSEO to check the connection and list projects; those reads use no credits. Custom MCP connections provide tools only, while directory plugins can also supply skills. Do not tell users they must upgrade their ChatGPT plan.
+ChatGPT setup guidance: send users to the OpenSEO plugin for ChatGPT at https://chatgpt.com/plugins/plugin_asdk_app_6abddd2c7e4c819191f1398c4bd8e9b3, which installs the tools and skills on the web and in the desktop app. Plugin availability depends on the user's ChatGPT plan, workspace, and region. A regular ChatGPT conversation cannot install OpenSEO itself; pasting the setup prompt there makes ChatGPT link the plugin. If the plugin isn't available, or OpenSEO is self-hosted, send them to the custom connection steps at https://openseo.so/docs/chatgpt#custom-connection. The custom connection works on Free and paid ChatGPT plans, subject to workspace permissions on Business, Enterprise, and Edu. The server URL must be entered in full as https://app.openseo.so/mcp; without https:// ChatGPT reports "Unsafe URL". Desktop users with Codex access can use it for agent-assisted setup. A local Codex connection does not connect ChatGPT web. Offer OpenSEO's app if their client cannot connect. Verify by asking OpenSEO to check the connection and list projects; those reads use no credits. Custom MCP connections provide tools only, while the plugin also supplies skills. Do not tell users they must upgrade their ChatGPT plan.
 
 ## App workflows
 

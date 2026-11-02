@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getUsageCreditsRemaining: vi.fn(),
   holdCredits: vi.fn<typeof holdCredits>(),
   finalizeHold: vi.fn<typeof finalizeHold>(),
+  sendCreditsExhaustedEvent: vi.fn(),
 }));
 vi.mock("@/server/lib/runtime-env", () => ({
   isHostedServerAuthMode: mocks.isHosted,
@@ -17,6 +18,9 @@ vi.mock("@/server/billing/subscription", () => ({
   finalizeHold: mocks.finalizeHold,
 }));
 vi.mock("@/server/lib/posthog", () => ({ captureServerEvent: vi.fn() }));
+vi.mock("@/server/email/onboarding-drip", () => ({
+  sendCreditsExhaustedEvent: mocks.sendCreditsExhaustedEvent,
+}));
 
 import {
   lockRenderingCredits,
@@ -29,7 +33,7 @@ const customer = {
   userEmail: "user@example.com",
   organizationId: "org",
 };
-// 100 pages hold 384 credits: every page falling back to Context.
+// 100 pages hold 128 credits: twice every page rendering on Cloudflare.
 const lockFor100Pages = () =>
   lockRenderingCredits({ customer, auditId: "audit", maxPages: 100 });
 const monthlyLock = {
@@ -48,7 +52,7 @@ const topupLock = {
 beforeEach(() => {
   mocks.isHosted.mockResolvedValue(true);
   mocks.getUsageCreditsRemaining.mockResolvedValue({
-    monthlyRemaining: 300,
+    monthlyRemaining: 100,
     topupRemaining: 1_000,
   });
   mocks.holdCredits.mockImplementation(
@@ -74,13 +78,13 @@ describe("rendering credit lock", () => {
     expect(mocks.holdCredits).not.toHaveBeenCalled();
   });
 
-  it("holds the worst case from the monthly balance first, then top-up, for at most 24 hours", async () => {
+  it("holds twice the Cloudflare estimate from the monthly balance first, then top-up, for at most 24 hours", async () => {
     const locks = await lockFor100Pages();
     expect(
       locks.map((lock) => [lock.featureId, lock.estimatedCredits]),
     ).toEqual([
-      ["usage_credits", 300],
-      ["topup_credits", 84],
+      ["usage_credits", 100],
+      ["topup_credits", 28],
     ]);
     const ttlMs = mocks.holdCredits.mock.calls[0][0].ttlMs ?? 0;
     expect(ttlMs).toBeGreaterThan(60 * 60_000);
@@ -89,13 +93,14 @@ describe("rendering credit lock", () => {
 
   it("refuses before holding anything when both balances together fall short", async () => {
     mocks.getUsageCreditsRemaining.mockResolvedValue({
-      monthlyRemaining: 300,
-      topupRemaining: 83,
+      monthlyRemaining: 100,
+      topupRemaining: 27,
     });
     const error = await lockFor100Pages().catch((reason: unknown) => reason);
     expect(error).toMatchObject({ code: "INSUFFICIENT_CREDITS" });
-    expect(String(error)).toContain("needs $0.39 of credits");
+    expect(String(error)).toContain("needs $0.13 of credits");
     expect(mocks.holdCredits).not.toHaveBeenCalled();
+    expect(mocks.sendCreditsExhaustedEvent).toHaveBeenCalledWith(customer);
   });
 
   it("releases the monthly hold when the top-up hold is refused", async () => {
@@ -113,6 +118,7 @@ describe("rendering credit lock", () => {
     await expect(lockFor100Pages()).rejects.toMatchObject({
       code: "INSUFFICIENT_CREDITS",
     });
+    expect(mocks.sendCreditsExhaustedEvent).toHaveBeenCalledWith(customer);
     expect(mocks.finalizeHold).toHaveBeenCalledTimes(1);
     expect(mocks.finalizeHold).toHaveBeenCalledWith(
       monthlyLock,

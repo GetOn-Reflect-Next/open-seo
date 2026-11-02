@@ -55,6 +55,19 @@ export const userOnboardingAnswers = pgTable(
   ],
 );
 
+// The paid-social ad (utm_medium=paid_social) a hosted signup came from, read
+// from the UTM tags the marketing site carries onto the sign-up link.
+// Campaign-level tags only: no click ids or other per-person ad identifiers.
+// No row = not from a paid-social ad.
+export const userSignupCampaigns = pgTable("user_signup_campaigns", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  utmSource: text("utm_source"),
+  utmCampaign: text("utm_campaign"),
+  utmContent: text("utm_content"),
+});
+
 // Projects for keyword research
 export const projects = pgTable(
   "projects",
@@ -76,6 +89,9 @@ export const projects = pgTable(
     // The Prompt Research keywords from AI visibility setup, one
     // per line, most important first. Null until setup runs.
     aiResearchKeywords: text("ai_research_keywords"),
+    // The IndexNow key the site hosts at /{key}.txt. Public by design, so it
+    // is stored as plain text. Null until IndexNow is first used.
+    indexnowKey: text("indexnow_key"),
   },
   (table) => [
     // Only the auto-created Default/null-domain project is a singleton. This
@@ -211,7 +227,8 @@ export const keywordMetrics = pgTable(
 // Rank Tracking tables
 // ============================================================================
 
-// One configuration per project+domain — defines what domain to track and how
+// One configuration per project+domain+location+language — defines what domain
+// to track and how
 export const rankTrackingConfigs = pgTable(
   "rank_tracking_configs",
   {
@@ -247,10 +264,16 @@ export const rankTrackingConfigs = pgTable(
       table.createdAt,
     ),
     uniqueIndex("rank_tracking_configs_national_idx")
-      .on(table.projectId, table.domain, table.locationCode)
+      .on(table.projectId, table.domain, table.locationCode, table.languageCode)
       .where(sql`${table.locationName} IS NULL`),
     uniqueIndex("rank_tracking_configs_local_idx")
-      .on(table.projectId, table.domain, table.locationCode, table.locationName)
+      .on(
+        table.projectId,
+        table.domain,
+        table.locationCode,
+        table.languageCode,
+        table.locationName,
+      )
       .where(sql`${table.locationName} IS NOT NULL`),
   ],
 );
@@ -373,14 +396,17 @@ export const organizationActivationState = pgTable(
 );
 
 // Per-project state for the dashboard's onboarding checklist. Most steps
-// complete via real product state (projects.domain, gsc_connections, MCP
-// activation); the competitor and keyword steps complete on click-through.
+// complete via real product state (audits, teammates, MCP activation). The
+// competitor and keyword steps record the first domain overview or keyword
+// research run on the project, from the app or an agent; the column names
+// predate that. The checklist counts a step done on any of the workspace's
+// projects.
 export const projectActivationState = pgTable("project_activation_state", {
   projectId: text("project_id")
     .primaryKey()
     .references(() => projects.id, { onDelete: "cascade" }),
-  competitorStepClickedAt: timestampColumn("competitor_step_clicked_at"),
-  keywordStepClickedAt: timestampColumn("keyword_step_clicked_at"),
+  competitorResearchedAt: timestampColumn("competitor_step_clicked_at"),
+  keywordResearchedAt: timestampColumn("keyword_step_clicked_at"),
   // "I already connected" on the MCP card: hides the card for this project
   // without faking the org-level first-tool-call milestone, which stays
   // truthful and self-heals when a real external call lands.
