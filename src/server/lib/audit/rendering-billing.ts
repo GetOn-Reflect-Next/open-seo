@@ -6,12 +6,13 @@ import {
   type BillingCustomerContext,
   type UsageCreditHold,
 } from "@/server/billing/subscription";
+import { sendCreditsExhaustedEvent } from "@/server/email/onboarding-drip";
 import { AppError } from "@/server/lib/errors";
 import { captureServerEvent } from "@/server/lib/posthog";
 import { isHostedServerAuthMode } from "@/server/lib/runtime-env";
 import {
-  estimateRenderingCredits,
   renderingCreditsNeededText,
+  renderingHoldCredits,
   renderUsageCredits,
   type RenderUsage,
 } from "@/shared/audit-rendering";
@@ -28,10 +29,11 @@ const LOCK_TTL_MS = 24 * 60 * 60_000 - 60_000;
 export type RenderingLock = UsageCreditHold;
 
 /**
- * Holds the worst-case rendering cost of a hosted audit before it starts:
- * every page falling back to Context. Throws INSUFFICIENT_CREDITS when the
- * monthly and top-up balances together cannot cover it. Returns no locks
- * outside hosted mode, where rendering is unmetered.
+ * Holds a hosted rendered audit's estimated cost before it starts
+ * (`renderingHoldCredits`). A site that falls back to Context more than that
+ * covers stops crawling when the hold runs out. Throws INSUFFICIENT_CREDITS
+ * when the monthly and top-up balances together cannot cover it. Returns no
+ * locks outside hosted mode, where rendering is unmetered.
  *
  * Unlike a single DataForSEO call, one audit's hold is large enough to split:
  * the monthly balance covers what it can and top-up covers the rest.
@@ -45,7 +47,7 @@ export async function lockRenderingCredits(input: {
   const { id: customerId } = await getOrCreateOrganizationCustomer(
     input.customer,
   );
-  const required = estimateRenderingCredits(input.maxPages).high;
+  const required = renderingHoldCredits(input.maxPages);
   const insufficient = new AppError(
     "INSUFFICIENT_CREDITS",
     renderingCreditsNeededText(input.maxPages),
@@ -54,7 +56,6 @@ export async function lockRenderingCredits(input: {
   // Clamp at 0: a balance can read negative after an overdraft.
   const monthly = Math.min(Math.max(balances.monthlyRemaining, 0), required);
   const topup = required - monthly;
-  if (topup > Math.max(balances.topupRemaining, 0)) throw insufficient;
 
   const properties = {
     creditFeature: "site_audit",
@@ -63,6 +64,7 @@ export async function lockRenderingCredits(input: {
   };
   const locks: RenderingLock[] = [];
   try {
+    if (topup > Math.max(balances.topupRemaining, 0)) throw insufficient;
     for (const [featureId, credits] of [
       [AUTUMN_SEO_DATA_BALANCE_FEATURE_ID, monthly],
       [AUTUMN_SEO_DATA_TOPUP_BALANCE_FEATURE_ID, topup],
@@ -84,6 +86,7 @@ export async function lockRenderingCredits(input: {
     }
   } catch (error) {
     await releaseRenderingLocks(locks);
+    if (error === insufficient) await sendCreditsExhaustedEvent(input.customer);
     throw error;
   }
   return locks;

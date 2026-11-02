@@ -48,6 +48,18 @@ async function createAudit(data: {
   });
 }
 
+/** Records where the crawl really starts, once the workflow has probed the site. */
+async function updateAuditStart(
+  auditId: string,
+  startUrl: string,
+  config: AuditConfig,
+) {
+  await db
+    .update(audits)
+    .set({ startUrl, config: JSON.stringify(config) })
+    .where(eq(audits.id, auditId));
+}
+
 async function updateAuditProgress(
   auditId: string,
   workflowInstanceId: string,
@@ -343,6 +355,16 @@ async function getAuditUsageForOrganization(organizationId: string) {
   };
 }
 
+async function hasAuditInOrganization(organizationId: string) {
+  const rows = await db
+    .select({ id: audits.id })
+    .from(audits)
+    .innerJoin(projects, eq(audits.projectId, projects.id))
+    .where(eq(projects.organizationId, organizationId))
+    .limit(1);
+  return rows.length > 0;
+}
+
 async function getAuditResultsForProject(auditId: string, projectId: string) {
   const audit = await getAuditForProject(auditId, projectId);
   if (!audit) {
@@ -407,6 +429,7 @@ async function deleteAuditForProject(auditId: string, projectId: string) {
 
 export const AuditRepository = {
   createAudit,
+  updateAuditStart,
   updateAuditProgress,
   completeAudit,
   failAudit,
@@ -422,6 +445,7 @@ export const AuditRepository = {
   hasPagesForAudit,
   getAuditsByProject,
   getAuditUsageForOrganization,
+  hasAuditInOrganization,
   getAuditResultsForProject,
   getLighthouseResultById,
   deleteAuditForProject,

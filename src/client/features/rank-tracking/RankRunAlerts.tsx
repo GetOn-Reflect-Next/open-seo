@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription } from "@/client/components/ui/alert";
+import { InsufficientCreditsError } from "@/client/features/billing/InsufficientCreditsError";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
 import type { useRankRunPolling } from "./useRankRunPolling";
 
@@ -22,6 +23,10 @@ export function RankRunAlerts({
     );
   }
 
+  if (run.status === "failed" && run.errorMessage === "INSUFFICIENT_CREDITS") {
+    return <InsufficientCreditsError title="Your last rank check didn't run" />;
+  }
+
   if (run.status === "failed") {
     return (
       <Alert variant="destructive">
@@ -37,7 +42,9 @@ export function RankRunAlerts({
     );
   }
 
-  // A completed run only has an error message when some checks failed.
+  // A completed run only has an error message when some checks have no
+  // result. Most are misses that retries couldn't confirm, not provider
+  // errors, so the copy doesn't blame the provider.
   if (run.status === "completed" && run.errorMessage) {
     return (
       <Alert variant="warning">
@@ -45,8 +52,8 @@ export function RankRunAlerts({
         <AlertDescription className="text-foreground">
           <p>
             <span className="font-medium">Your last check was incomplete.</span>{" "}
-            Our search data provider had errors, so some keywords will show
-            their previous position.
+            We couldn't confirm a result for some keywords, so they show their
+            previous position.
           </p>
         </AlertDescription>
       </Alert>

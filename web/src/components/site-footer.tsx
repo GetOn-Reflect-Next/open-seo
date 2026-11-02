@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { PrivacyChoicesLink } from "@/components/privacy-choices";
 import { SocialLinks } from "@/components/social-links";
 import { featureGroups } from "@/lib/feature-pages";
 import { freeToolList } from "@/lib/free-tools/tool-pages";
@@ -16,6 +17,9 @@ export function SiteFooter({ className }: { className?: string }) {
       <Link to="/" className="text-sm font-semibold text-neutral-900">
         OpenSEO
       </Link>
+      <p className="mt-1">
+        Part of <a href="https://everyapp.com">EveryApp</a>
+      </p>
 
       <div className="mt-6 grid grid-cols-2 gap-8 md:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]">
         <div>
@@ -104,6 +108,7 @@ export function SiteFooter({ className }: { className?: string }) {
             </a>
             <Link to="/privacy">Privacy</Link>
             <Link to="/terms-and-conditions">Terms</Link>
+            <PrivacyChoicesLink />
           </div>
         </div>
       </div>

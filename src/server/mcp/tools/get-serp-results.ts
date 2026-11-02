@@ -7,7 +7,7 @@ import {
 import { buildCacheKey, getCached, setCached } from "@/server/lib/r2-cache";
 import { mcpResponse } from "@/server/mcp/formatters";
 import { buildProjectMeta } from "@/server/mcp/context";
-import { optionalMetaOutputSchema } from "@/server/mcp/output-schemas";
+import { serpSchema, serpItemSchema } from "@/shared/mcp-contracts";
 import { withMcpProjectAuth } from "@/server/mcp/project-auth";
 import { resolveMarket } from "@/shared/keyword-locations";
 import { assertLocalResearchLocation } from "@/server/features/keywords/services/research/local-volume";
@@ -27,19 +27,6 @@ import {
 // A repeat within this window is answered from the saved rows, uncharged, so a
 // caller that lost a response can call again instead of paying twice.
 const SERP_RESULTS_CACHE_TTL_SECONDS = 12 * 60 * 60;
-
-const serpItemSchema = z
-  .object({
-    type: z.string().nullable().optional(),
-    rank: z.number().nullable(),
-    // Optional: rows cached before this field existed don't carry it.
-    organicRank: z.number().nullable().optional(),
-    title: z.string().nullable(),
-    url: z.string().nullable(),
-    domain: z.string().nullable(),
-    description: z.string().nullable(),
-  })
-  .passthrough();
 
 type SerpItem = z.infer<typeof serpItemSchema>;
 
@@ -110,27 +97,7 @@ export const getSerpResultsTool = {
     description:
       "Fetch live Google organic search results for 1-10 keywords. Use this to inspect who ranks for a query, verify competitors, compare SERPs across keywords, or gather source URLs before content planning. Returns the top `depth` result rows per keyword (default 20). `rank` counts every SERP element (ads, People Also Ask, ...); `organicRank` counts organic results only and matches rank tracker positions. Charges credits per keyword: ~5 each at the default depth 20, and each additional 10 of depth adds ~2.5. A keyword fetched in this project in the last 12 hours with the same market, device, and depth returns those rows again at no charge once the original call has finished, so if a response is lost, wait a minute and repeat the same call. Per-keyword errors don't fail the batch.",
     inputSchema,
-    outputSchema: z.looseObject({
-      results: z.array(
-        z.union([
-          z
-            .object({
-              keyword: z.string(),
-              ok: z.literal(true),
-              items: z.array(serpItemSchema),
-            })
-            .passthrough(),
-          z
-            .object({
-              keyword: z.string(),
-              ok: z.literal(false),
-              error: z.string(),
-            })
-            .passthrough(),
-        ]),
-      ),
-      ...optionalMetaOutputSchema,
-    }),
+    outputSchema: serpSchema,
     annotations: {
       readOnlyHint: false,
       openWorldHint: true,
@@ -140,10 +107,15 @@ export const getSerpResultsTool = {
   handler: withMcpProjectAuth(async (args: Args, context) => {
     const client = createDataforseoClient(context.billing);
     const depth = args.depth ?? SERP_ANALYSIS_DEPTH;
-    const results = await Promise.all(
+    const lookups = await Promise.all(
       args.queries.map(async (q) => {
         try {
           const market = resolveMarket(q, context.project);
+          const scope = {
+            ...market,
+            locationName: q.locationName,
+            device: q.device ?? "desktop",
+          };
           if (q.locationName) {
             await assertLocalResearchLocation(
               market.locationCode,
@@ -164,56 +136,98 @@ export const getSerpResultsTool = {
           const cached = z
             .array(serpItemSchema)
             .safeParse(await getCached(cacheKey));
-          if (cached.success) {
-            return {
-              keyword: q.keyword,
-              ok: true as const,
-              items: cached.data,
-            };
-          }
-
-          const items = await client.serp.live({
+          const input = {
             keyword: q.keyword,
             ...market,
             locationName: q.locationName,
             depth,
             device: q.device,
-          });
-          // Trim noise — return only essentials per item.
-          const trimmed = items.slice(0, depth).map((item) => ({
-            type: item.type,
-            rank: item.rank_absolute ?? item.rank_group ?? null,
-            organicRank:
-              item.type === "organic" ? (item.rank_group ?? null) : null,
-            title: item.title ?? null,
-            url: item.url ?? null,
-            domain: item.domain ?? null,
-            description: item.description ?? null,
-          }));
-          // DataForSEO reports "no results" transiently; don't pin that for
-          // the whole window. waitUntil, not void: workerd cancels
-          // unregistered pending I/O once the response is sent.
-          if (trimmed.length > 0) {
-            waitUntil(
-              setCached(
-                cacheKey,
-                trimmed,
-                SERP_RESULTS_CACHE_TTL_SECONDS,
-              ).catch((error) => {
-                console.error("mcp.serp-results.cache-write failed:", error);
-              }),
-            );
-          }
-          return { keyword: q.keyword, ok: true as const, items: trimmed };
-        } catch (error) {
-          return {
-            keyword: q.keyword,
-            ok: false as const,
-            error: toolErrorMessage(error),
           };
+          return {
+            ok: true as const,
+            keyword: q.keyword,
+            scope,
+            cacheKey,
+            input,
+            cachedItems: cached.success ? cached.data : undefined,
+          };
+        } catch (error) {
+          return { ok: false as const, keyword: q.keyword, error };
         }
       }),
     );
+
+    // One batch for every uncached query: its credits settle once, after
+    // all of them have answered (see client.serp.liveBatch).
+    const misses = lookups.flatMap((lookup) =>
+      lookup.ok && !lookup.cachedItems ? [lookup] : [],
+    );
+    // A batch that can't hold any credits rejects as a whole; report it on
+    // each uncached query so cached ones still return.
+    const fetched =
+      misses.length > 0
+        ? await client.serp
+            .liveBatch(misses.map((miss) => miss.input))
+            .catch((reason: unknown) =>
+              misses.map(() => ({ status: "rejected" as const, reason })),
+            )
+        : [];
+
+    const results = lookups.map((lookup) => {
+      if (!lookup.ok) {
+        return {
+          keyword: lookup.keyword,
+          ok: false as const,
+          error: toolErrorMessage(lookup.error),
+        };
+      }
+      if (lookup.cachedItems) {
+        return {
+          keyword: lookup.keyword,
+          ok: true as const,
+          items: lookup.cachedItems,
+          ...lookup.scope,
+        };
+      }
+      const outcome = fetched[misses.indexOf(lookup)];
+      if (outcome.status === "rejected") {
+        return {
+          keyword: lookup.keyword,
+          ok: false as const,
+          error: toolErrorMessage(outcome.reason),
+        };
+      }
+      // Trim noise — return only essentials per item.
+      const trimmed = outcome.value.slice(0, depth).map((item) => ({
+        type: item.type,
+        rank: item.rank_absolute ?? item.rank_group ?? null,
+        organicRank: item.type === "organic" ? (item.rank_group ?? null) : null,
+        title: item.title ?? null,
+        url: item.url ?? null,
+        domain: item.domain ?? null,
+        description: item.description ?? null,
+      }));
+      // DataForSEO reports "no results" transiently; don't pin that for the
+      // whole window. waitUntil, not void: workerd cancels unregistered
+      // pending I/O once the response is sent.
+      if (trimmed.length > 0) {
+        waitUntil(
+          setCached(
+            lookup.cacheKey,
+            trimmed,
+            SERP_RESULTS_CACHE_TTL_SECONDS,
+          ).catch((error) => {
+            console.error("mcp.serp-results.cache-write failed:", error);
+          }),
+        );
+      }
+      return {
+        keyword: lookup.keyword,
+        ok: true as const,
+        items: trimmed,
+        ...lookup.scope,
+      };
+    });
 
     const okCount = results.filter((r) => r.ok).length;
     // One budget for the whole response: ten queries split it, so a 10 × depth
