@@ -1,3 +1,5 @@
+> **This repo is archived. Do not make changes to it or work in it:** it was retired with no successor. SEO data comes from the DataforSEO MCP.
+
 # Agent guidance
 
 ## Engineering principles
